@@ -241,13 +241,21 @@ void format_date_for_todoist(const char *input_date, char *output_date) {
 
 int match_groupe(const char *cell, int group_digit, char group_letter, const char *discipline)
 {
-    if (!cell || strlen(cell) == 0) return 0;
+    if (!cell || strlen(cell) == 0)
+        return 0;
 
     int cell_digit = 0;
-    if (isdigit(cell[0]))
-	    sscanf(cell, "%d", &cell_digit);
-    char cell_letter = (strlen(cell) > 1) ? cell[1] : 0;
+    int cell_letter = 0;
 
+    if (isdigit(cell[0])) {
+        sscanf(cell, "%d", &cell_digit);
+
+        for (int i = 0; cell[i]; i++)
+            if (isalpha(cell[i])) {
+                cell_letter = cell[i];
+                break;
+            }
+    }
     if (cell_digit != group_digit) return 0;
 
     // Pour le Français, il faut matcher chiffre + lettre
