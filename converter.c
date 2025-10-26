@@ -87,7 +87,9 @@ int parse_csv_line(const char *line, char **cells)
             n++;
             buf_index = 0;
         } else {
-            buffer[buf_index++] = c;
+            if (buf_index < MAX_LINE - 1) {
+                buffer[buf_index++] = c;
+            }
         }
         if (c == '\0') break;
     }
@@ -103,6 +105,10 @@ int read_weeks(FILE *f, WeekDate *weeks) {
     char line[MAX_LINE * 10];
     int count = 0;
     rewind(f);
+
+    for (int i = 0; i < MAX_CELLS; i++) {
+        global_week_map[i] = -1;
+    }
 
     while (read_full_csv_line(f, line, sizeof(line))) {
         remove_bom(line);
@@ -124,7 +130,7 @@ int read_weeks(FILE *f, WeekDate *weeks) {
                         strcpy(weeks[count].date, newline + 1);
 
                         printf("Semaine %d: num='%s' date='%s'\n", count, weeks[count].week_num, weeks[count].date);
-                        
+
                         global_week_map[i] = count;  // MAP colonne -> index
                         count++;
                     }
@@ -132,7 +138,7 @@ int read_weeks(FILE *f, WeekDate *weeks) {
                     global_week_map[i] = -1;  // Colonne vide
                 }
             }
-            
+
             global_week_count = count;
             free_cells(cells, n);
             break;
@@ -141,33 +147,33 @@ int read_weeks(FILE *f, WeekDate *weeks) {
     return count;
 }
 
-int is_future_date_with_offset(const char *date_str, int day_offset) 
+int is_future_date_with_offset(const char *date_str, int day_offset)
 {
     if (strlen(date_str) < 8) return 0;
-    
+
     // Parse la date
     int day, month, year;
     sscanf(date_str, "%d/%d/%d", &day, &month, &year);
     year += 2000;
-    
+
     // Crée une structure tm pour la date de la khôlle
     struct tm kholle_date = {0};
     kholle_date.tm_mday = day;
     kholle_date.tm_mon = month - 1;
     kholle_date.tm_year = year - 1900;
     kholle_date.tm_hour = 12;
-    
+
     kholle_date.tm_mday += day_offset;
-    
+
     time_t kholle_time = mktime(&kholle_date);
-    
+
     time_t now = time(NULL);
     struct tm *current_time = localtime(&now);
     current_time->tm_hour = 0;
     current_time->tm_min = 0;
     current_time->tm_sec = 0;
     time_t current_day = mktime(current_time);
-    
+
     return kholle_time >= current_day;
 }
 
@@ -181,47 +187,59 @@ int day_to_offset(const char *jour) {
     return 0;
 }
 
-// Ajoute des jours à une date DD/MM/YY et une heure, retourne au format YYYY-MM-DD HH:MM
-void add_days_to_date_with_time(const char *input_date, int days_to_add, const char *horaire, char *output_date) 
-{
-    if (strlen(input_date) < 8) 
-    {
-        strcpy(output_date, "");
-        return;
+// Détermine si la date est en heure d'été (dernier dimanche de mars au dernier dimanche d'octobre)
+int is_dst(int day, int month, int year) {
+    if (month < 3 || month > 10) return 0;
+    if (month > 3 && month < 10) return 1;
+
+    struct tm temp = {0};
+    temp.tm_year = year - 1900;
+    temp.tm_mon = month - 1;
+    temp.tm_mday = day;
+    mktime(&temp);
+
+    int wday = temp.tm_wday;
+    int last_sunday = day + (7 - wday) % 7;
+
+    while (last_sunday + 7 <= 31) {
+        temp.tm_mday = last_sunday + 7;
+        if (mktime(&temp) == -1) break;
+        if (temp.tm_mon != month - 1) break;
+        last_sunday += 7;
     }
-    
-    // Parse la date de base (lundi de la semaine)
-    int day, month, year;
-    sscanf(input_date, "%d/%d/%d", &day, &month, &year);
+
+    if (month == 3) return day >= last_sunday;
+    if (month == 10) return day < last_sunday;
+
+    return 0;
+}
+
+void add_days_to_date_with_time(char *output, const char *week_date, const char *day, const char *horaire) {
+    int day_num, month, year;
+    sscanf(week_date, "%d/%d/%d", &day_num, &month, &year);
     year += 2000;
-    
-    // Parse l'horaire (ex: "13h" ou "18h30" ou "12h")
-    int hour = 0, minute = 0;
-    if (strstr(horaire, "h")) 
-    {
-        sscanf(horaire, "%dh%d", &hour, &minute);
-    }
-    
-    // Crée une structure tm
-    struct tm date_struct = {0};
-    date_struct.tm_mday = day;
-    date_struct.tm_mon = month - 1;  // tm_mon va de 0 à 11
-    date_struct.tm_year = year - 1900;
-    date_struct.tm_hour = hour;
-    date_struct.tm_min = minute;
-    
-    date_struct.tm_mday += days_to_add;
-    
-    // Normalise la date (gère le changement de mois/année automatiquement)
-    mktime(&date_struct);
-    
-    // Formate en YYYY-MM-DD HH:MM
-    sprintf(output_date, "%04d-%02d-%02d %02d:%02d", 
-            date_struct.tm_year + 1900, 
-            date_struct.tm_mon + 1, 
-            date_struct.tm_mday,
-            date_struct.tm_hour,
-            date_struct.tm_min);
+
+    struct tm date = {0};
+    date.tm_year = year - 1900;
+    date.tm_mon = month - 1;
+    date.tm_mday = day_num + day_to_offset(day);
+
+    // Lecture flexible des horaires : "13h", "13h30", "8h5", etc.
+    int heure = 0, minute = 0;
+    sscanf(horaire, "%dh%d", &heure, &minute);
+
+    date.tm_hour = heure;
+    date.tm_min = minute;
+    date.tm_sec = 0;
+    date.tm_isdst = -1;
+
+    mktime(&date);
+
+    char temp[64];
+    strftime(temp, sizeof(temp), "%Y-%m-%d %H:%M", &date);
+
+    int offset = is_dst(date.tm_mday, date.tm_mon + 1, date.tm_year + 1900) ? 2 : 1;
+    sprintf(output, "%s+0%d:00", temp, offset);
 }
 
 // Convertit une date DD/MM/YY en format Todoist (YYYY-MM-DD)
@@ -308,20 +326,20 @@ void format_prof_name(const char *raw_prof, char *formatted_prof) {
 void export_group(const char *input_file, int group_digit, char group_letter)
 {
     FILE *f = fopen(input_file,"r");
-    if (!f) 
-    { 
-        perror("Erreur ouverture fichier"); 
-        return; 
+    if (!f)
+    {
+        perror("Erreur ouverture fichier");
+        return;
     }
 
     char output_name[128];
     sprintf(output_name,"Output_csvs/todoist_%d%c.csv", group_digit, group_letter);
     FILE *out = fopen(output_name,"w");
-    if (!out) 
-    { 
-        perror("Erreur création fichier de sortie"); 
-        fclose(f); 
-        return; 
+    if (!out)
+    {
+        perror("Erreur création fichier de sortie");
+        fclose(f);
+        return;
     }
 
     fprintf(out,"TYPE,CONTENT,PRIORITY,INDENT,AUTHOR,RESPONSIBLE,DATE,DATE_LANG,TIMEZONE\n");
@@ -349,7 +367,7 @@ void export_group(const char *input_file, int group_digit, char group_letter)
     // Variable pour stocker la dernière discipline non vide
     char last_discipline[256] = "";
 
-    while (read_full_csv_line(f, line, sizeof(line))) 
+    while (read_full_csv_line(f, line, sizeof(line)))
     {
         line_num++;
         remove_bom(line);
@@ -357,7 +375,7 @@ void export_group(const char *input_file, int group_digit, char group_letter)
         char *cells[MAX_CELLS];
         int n = parse_csv_line(line, cells);
 
-        if (n < 6) 
+        if (n < 6)
         {
             free_cells(cells, n);
             continue;
@@ -370,43 +388,43 @@ void export_group(const char *input_file, int group_digit, char group_letter)
         char *salle = cells[4];
 
         // Si discipline est vide, utilise la dernière discipline
-        if (strlen(discipline) > 0) 
+        if (strlen(discipline) > 0)
         {
             strcpy(last_discipline, discipline);
-        } 
-        else 
+        }
+        else
         {
             discipline = last_discipline;
         }
 
         // Ligne vide complète
-        if (strlen(discipline) == 0 || strlen(jour) == 0) 
+        if (strlen(discipline) == 0 || strlen(jour) == 0)
         {
             free_cells(cells, n);
             continue;
         }
 
-        for (int i = 5; i < n; i++) 
+        for (int i = 5; i < n; i++)
         {
             // Skip les colonnes vides
-            if (strlen(cells[i]) == 0) 
+            if (strlen(cells[i]) == 0)
             {
                 continue;
             }
-            
+
             // Vérifie que la colonne a un mapping valide
             if (global_week_map[i] == -1 || global_week_map[i] >= n_weeks)
             {
                 continue;
             }
-            
+
             int week_idx = global_week_map[i];
-            
-            if (match_groupe(cells[i], group_digit, group_letter, discipline)) 
+
+            if (match_groupe(cells[i], group_digit, group_letter, discipline))
             {
                 int day_offset = day_to_offset(jour);
 
-                if (is_future_date_with_offset(weeks[week_idx].date, day_offset)) 
+                if (is_future_date_with_offset(weeks[week_idx].date, day_offset))
                 {
                     // Formatte le nom du prof
                     char prof_clean[256];
@@ -419,8 +437,8 @@ void export_group(const char *input_file, int group_digit, char group_letter)
                         strcpy(prof_clean, "");
                     }
 
-                    char date_todoist[32];
-                    add_days_to_date_with_time(weeks[week_idx].date, day_offset, horaire, date_todoist);
+                    char date_todoist[64];
+                    add_days_to_date_with_time(date_todoist, weeks[week_idx].date, jour, horaire);
 
                     char task_content[1024];
                     if (strlen(prof_clean) > 0)
@@ -438,12 +456,12 @@ void export_group(const char *input_file, int group_digit, char group_letter)
                     }
                     else
                     {
-                        snprintf(task_content, sizeof(task_content), "Khôlle de %s en %s avec M. LASSUS-MINVIELLE",
+                        snprintf(task_content, sizeof(task_content), "Khôlle de %s en %s",
                                 discipline, salle);
                     }
 
                     // Format Todoist: TYPE,CONTENT,PRIORITY,INDENT,AUTHOR,RESPONSIBLE,DATE,DATE_LANG,TIMEZONE
-                    fprintf(out, "task,\"%s\",1,1,,,\"%s\",en,\n", task_content, date_todoist);
+                    fprintf(out, "task,\"%s\",1,1,,,\"%s\",fr,\n", task_content, date_todoist);
 
                     entries_found++;
                 }
