@@ -456,8 +456,11 @@ void export_group(const char *input_file, int group_digit, char group_letter)
                     }
                     else
                     {
-                        snprintf(task_content, sizeof(task_content), "Khôlle de %s en %s",
-                                discipline, salle);
+                        if (strcmp(discipline, "Français") == 0)
+                            snprintf(task_content, sizeof(task_content), "Khôlle de Français en %s avec M. LASSUS-MINVIELLE", salle);
+
+                        else
+                            snprintf(task_content, sizeof(task_content), "Khôlle de %s en %s",discipline, salle);
                     }
 
                     // Format Todoist: TYPE,CONTENT,PRIORITY,INDENT,AUTHOR,RESPONSIBLE,DATE,DATE_LANG,TIMEZONE
